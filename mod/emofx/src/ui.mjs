@@ -338,11 +338,8 @@ export function mountFx(/** @type {HTMLElement} */ container, /** @type {any} */
     if (hasOfficialEqualizer(folium)) {
       return {
         via: 'official',
-        set: (g) => {
-          const r = applyEqCurve(folium, g);
-          if (!r.ok) throw new Error('equalizer:' + r.reason);
-          return r;
-        },
+        // 返回 { ok, reason } 而不是抛错：限频 / 面板开着都是正常状态。
+        set: (g) => applyEqCurve(folium, g),
         get: () => {
           const s = readEqState(folium);
           return s.ok ? s.state.gains : null;
@@ -374,6 +371,14 @@ export function mountFx(/** @type {HTMLElement} */ container, /** @type {any} */
   let lastApplyKey = '';
   /** 用户手动点「应用」时置 true，允许覆盖自己之前的曲线（自动流程不覆盖）。 */
   let forceApply = false;
+  /*
+   * 写入节流：官方接口限「每秒 1 次、每分钟 20 次」，而 tick 每 300ms 跑一次。
+   * 不在客户端拦住的话，每两三次 tick 就会撞一次限频 —— 虽然现在不会误报失败了，
+   * 但会白白消耗每分钟 20 次的配额，用户手动改的时候反而可能被拒。
+   * 这里按 1.1 秒的最小间隔放行（略大于官方 1 秒，留一点余量）。
+   */
+  const WRITE_MIN_INTERVAL_MS = 1100;
+  let lastWriteAt = 0;
   const applyToHost = () => {
     const api = resolveAudioApi();
     if (!api) {
@@ -400,9 +405,37 @@ export function mountFx(/** @type {HTMLElement} */ container, /** @type {any} */
         return false;
       }
     }
+    // 节流：距上次写入不足最小间隔就跳过，下一个 tick 自然重试（曲线不会因此丢失）。
+    if (api.via === 'official' && Date.now() - lastWriteAt < WRITE_MIN_INTERVAL_MS) return true;
     if (!need) return true;
     try {
-      api.set(target);
+      const writeResult = api.set(target);
+      /*
+       * 官方接口的拒绝要分开对待，不能一律报「失败」：
+       *   · rate-limited —— 每秒最多 1 次、每分钟 20 次。tick 每 300ms 跑一次，
+       *     所以每两三次就会撞上一次，这是正常节奏，不是错误；
+       *   · panel-open —— 用户在音频效果器面板里，按文档要求必须让它。
+       * 这两种都不写 lastApplyKey，下一个 tick 会自然重试。
+       */
+      if (writeResult && writeResult.ok === false) {
+        const reason = String(writeResult.reason || '');
+        if (reason === 'rate-limited' || reason === 'panel-open') {
+          msg.textContent = reason === 'panel-open'
+            ? '等待中：音频效果器面板开着'
+            : '等待中：写入限频（每秒 1 次）';
+          msg.style.color = '#94a3b8';
+          return true;
+        }
+        if (reason.startsWith('equalizer-unavailable')) {
+          msg.textContent = '官方接口不可用（需 Folia 0.7.22+）';
+          msg.style.color = '#fbbf24';
+          return false;
+        }
+        msg.textContent = '写入被拒绝：' + reason;
+        msg.style.color = '#fca5a5';
+        return false;
+      }
+      lastWriteAt = Date.now();
       lastApplyKey = key;
       try {
         folium?.storage?.set?.('autoWrite', JSON.stringify({ t: Date.now(), via: api.via, gains: target }))?.catch?.(() => {});
