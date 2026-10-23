@@ -30,4 +30,10 @@ export { mountFx as mount, feed, reset };
 mkdirSync(join(OUT, '..'), { recursive: true });
 writeFileSync(OUT, bundle, 'utf8');
 console.log('[build_ui] →', OUT);
+
+// 同时往模组目录写一份内置副本：从 folium-compound 安装的模组没有 mods-cache，
+// 只能靠目录里这份才能显示界面（见 index.cjs 的 bundledUiPath）。
+const BUILT_IN = join(SRC, '..', 'ui.bundle.mjs');
+writeFileSync(BUILT_IN, bundle, 'utf8');
+console.log('[build_ui] →', BUILT_IN);
 console.log('[build_ui]', (bundle.length / 1024).toFixed(1), 'KB,', statSync(OUT).mtimeMs.toFixed(0));
