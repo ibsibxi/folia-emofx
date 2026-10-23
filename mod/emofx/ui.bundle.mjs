@@ -467,6 +467,84 @@ function syncEqCurve(folium, gains, { modId, force = false }) {
 /** 模组 id，与 mod.json 一致；官方接口用它标识曲线归属。 */
 const MOD_ID = 'emofx';
 
+/**
+ * 整个模组只跑一个 EQ 写入循环。
+ *
+ * Folia 会同时挂上多个视图（首页标签 + 播放页面板），每个 mountFx 原本各有一个
+ * applyTimer。它们各自按自己的流派/情绪算曲线、各自计时节流，结果互相覆盖写入，
+ * 宿主里的 EQ 来回跳变（实测 9 秒内 16 次写入，日志里曲线在两组值之间反复切换）。
+ *
+ * 现在只留一个循环：优先让正在显示的那个视图决定写什么；都不显示时沿用最后一个，
+ * 这样面板关掉也照样跟歌调音。
+ */
+const eqWriters = { list: [], timer: null };
+
+/**
+ * 没有界面时也能自己跟歌调音的引擎状态。
+ *
+ * Folia 的标签页是「打开才挂载」的，所以视图里的逻辑在面板关掉后就完全停了 ——
+ * 而模组的本意是「放歌就自动匹配 EQ」，不该要求用户一直开着面板。
+ *
+ * 面板打开过之后，视图会把学到的流派/情绪同步进这里；之后即使面板关掉，
+ * 这个引擎仍按同一套规则算曲线、写宿主。默认值（流派 8、自动流派开、目标峰值 3.5 dB）
+ * 与视图一致，所以从未打开过面板也能工作。
+ */
+const engine = {
+  genre: 8,
+  autoGenre: true,
+  emo: 0,
+  candIdx: -1,
+  candCount: 0,
+  lastAt: 0,
+  lastKey: '',
+};
+
+/** 视图里的写入循环已经在跑时，引擎让位，避免两个写者互相覆盖。 */
+function autoTick(/** @type {any} */ folium) {
+  if (eqWriters.list.length > 0) return;
+  if (!hasOfficialEqualizer(folium)) return;
+  if (!alive() || !shared.bands) return;
+
+  const now = Date.now();
+  if (now - engine.lastAt < 1100) return;
+
+  const axes = axesOf(shared.bands);
+  if (!axes) return;
+  engine.emo = matchEmotion(axes).idx;
+
+  if (engine.autoGenre) {
+    const g = matchGenre(axes);
+    if (g.margin >= 0.06 && g.idx !== engine.genre) {
+      if (g.idx === engine.candIdx) engine.candCount++;
+      else {
+        engine.candIdx = g.idx;
+        engine.candCount = 1;
+      }
+      // 与视图一样的防抖：同一候选连续两次才切。
+      if (engine.candCount >= 2) {
+        engine.genre = g.idx;
+        engine.candCount = 0;
+      }
+    } else {
+      engine.candIdx = -1;
+      engine.candCount = 0;
+    }
+  }
+
+  const raw = curveFor(engine.emo, engine.genre);
+  let peak = 0;
+  for (const v of raw) peak = Math.max(peak, Math.abs(v));
+  const gain = peak > 0.05 ? Math.min(3, Math.max(0.8, 3.5 / peak)) : 1;
+  const gains = raw.map((v) => Math.max(-12, Math.min(12, v * gain)));
+
+  const key = gains.map((v) => v.toFixed(1)).join(',');
+  engine.lastAt = now;
+  if (key === engine.lastKey) return;
+
+  const result = applyEqCurve(folium, gains);
+  if (result.ok) engine.lastKey = key;
+}
+
 const CSS = `
 .fx{--acc:#6d7cff;--accT:#e6e9ff;--bd:rgba(109,124,255,.55);--card:rgba(127,127,127,.08);--line:rgba(127,127,127,.18);
   display:flex;flex-direction:column;gap:9px;padding:12px 13px 16px;height:100%;box-sizing:border-box;overflow:auto;
@@ -757,6 +835,10 @@ function mountFx(/** @type {HTMLElement} */ container, /** @type {any} */ ctx, /
       ? `流派 ${genreName(genre)}${genreConf ? ` · ${genreConf.toFixed(2)}` : ''}`
       : `流派 ${genreName(genre)} · 手动`;
     renderBands();
+    // 把学到的流派/情绪同步给无界面引擎：面板关掉后由它继续跟歌调音。
+    engine.genre = genre;
+    engine.autoGenre = autoGenre;
+    engine.emo = emo;
     applyToHost();
   }
 
@@ -769,15 +851,34 @@ function mountFx(/** @type {HTMLElement} */ container, /** @type {any} */ ctx, /
   });
   autoBtn.classList.add('pri');
 
+  /**
+   * 这个视图现在还看得见吗。
+   *
+   * Folia 会把注册过的标签页都挂上（首页标签 + 播放页面板），切走后容器被隐藏。
+   * 隐藏的那些如果继续跑，会有三个后果：
+   *   · 各自按自己的流派/情绪算曲线，互相覆盖写入 → 宿主里的 EQ 来回跳变；
+   *   · 每个视图都有自己的节流计时，合起来远超声明的「每秒 1 次」；
+   *   · 白耗 CPU 画一张没人看的图。
+   * 所以隐藏时既不画也不写。
+   */
+  const isVisible = () => {
+    if (!container.isConnected) return false;
+    const rect = container.getBoundingClientRect();
+    return rect.width > 1 && rect.height > 1;
+  };
+
   // ---------- 逐帧缓动 ----------
   let raf = 0;
   let last = performance.now();
   const frame = (/** @type {number} */ now) => {
     const dt = Math.min(0.05, (now - last) / 1000);
     last = now;
-    const k = 1 - Math.exp(-dt / 0.16); // 时间常数 160ms：肉眼是连续滑动，不是跳变
-    for (let i = 0; i < 10; i++) shown[i] += (target[i] - shown[i]) * k;
-    paint();
+    // 看不见就不画；缓动值也停住，切回来时从原处继续，不会跳。
+    if (isVisible()) {
+      const k = 1 - Math.exp(-dt / 0.16); // 时间常数 160ms：肉眼是连续滑动，不是跳变
+      for (let i = 0; i < 10; i++) shown[i] += (target[i] - shown[i]) * k;
+      paint();
+    }
     raf = requestAnimationFrame(frame);
   };
   raf = requestAnimationFrame(frame);
@@ -910,8 +1011,20 @@ function mountFx(/** @type {HTMLElement} */ container, /** @type {any} */ ctx, /
     }
   };
 
-  // 稳一笔：tick 改了曲线就写；另外每 1.5 秒自检一次，被宿主回刷就补写
-  const applyTimer = setInterval(applyToHost, 1500);
+  // 稳一笔：tick 改了曲线就写；另外每 1.5 秒自检一次，被宿主回刷就补写。
+  // 写入函数交给模块级单循环统一驱动，见 eqWriters 的注释。
+  applyToHost.isVisible = isVisible;
+  eqWriters.list.push(applyToHost);
+  if (!eqWriters.timer) {
+    eqWriters.timer = setInterval(() => {
+      if (eqWriters.list.length === 0) return;
+      const visible = eqWriters.list.filter((fn) => fn.isVisible?.());
+      const pick = visible[visible.length - 1] || eqWriters.list[eqWriters.list.length - 1];
+      try {
+        pick?.();
+      } catch {}
+    }, 1500);
+  }
 
   pickLabel.textContent = genreName(genre);
   syncGrid();
@@ -920,10 +1033,15 @@ function mountFx(/** @type {HTMLElement} */ container, /** @type {any} */ ctx, /
 
   return () => {
     clearInterval(timer);
-    clearInterval(applyTimer);
     cancelAnimationFrame(raf);
+    const at = eqWriters.list.indexOf(applyToHost);
+    if (at >= 0) eqWriters.list.splice(at, 1);
+    if (eqWriters.list.length === 0 && eqWriters.timer) {
+      clearInterval(eqWriters.timer);
+      eqWriters.timer = null;
+    }
     container.innerHTML = '';
   };
 }
 
-export { mountFx as mount, feed, reset };
+export { mountFx as mount, feed, reset, autoTick };

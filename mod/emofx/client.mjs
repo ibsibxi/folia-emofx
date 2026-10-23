@@ -82,6 +82,8 @@ export default function activate(folium) {
       ctx.onFrame(() => {
         try {
           loaded?.mod.feed(ctx.audio.getBands(), ctx.audio.getPower());
+          // 面板没开时由引擎自己算曲线并写入宿主 —— 模组不该要求用户一直开着面板。
+          loaded?.mod.autoTick?.(folium);
         } catch {}
       });
       return () => {

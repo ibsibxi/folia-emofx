@@ -24,7 +24,7 @@ const parts = ORDER.map((f) => {
 
 const bundle = `${parts.join('\n\n')}
 
-export { mountFx as mount, feed, reset };
+export { mountFx as mount, feed, reset, autoTick };
 `;
 
 mkdirSync(join(OUT, '..'), { recursive: true });

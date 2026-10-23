@@ -12,6 +12,10 @@
 3. 曲线画成折线图，跟着歌曲实时移动
 4. 通过 `folium.equalizer.applyCurve()` 写入宿主 EQ
 
+面板关掉也照常工作：Folia 的标签页是「打开才挂载」的，所以曲线计算与写入放在
+stageLayer 的逐帧回调里，只有一个写入循环。面板打开时由面板驱动（显示的和听到的一致），
+关掉后由无界面的引擎接着跑。
+
 ## 为什么走官方 equalizer 接口
 
 早期版本是扫 React fiber 找到 settings store 的 setter，直接改 `customSlots` 和
