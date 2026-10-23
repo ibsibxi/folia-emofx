@@ -1,0 +1,22 @@
+# 构建产物与打包结果 —— 可随时重新生成
+dist/*.zip
+dist/*.wav
+dist/*.svg
+dist/*-完整包/
+
+# 第三方依赖 / 下载的仓库副本（体积大、可重新拉取）
+vendor/
+
+# 依赖目录
+node_modules/
+
+# 系统与编辑器
+.DS_Store
+Thumbs.db
+*.log
+.vscode/
+.idea/
+
+# 临时文件
+*.tmp
+.tmp/

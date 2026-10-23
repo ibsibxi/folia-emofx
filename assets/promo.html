@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { width:1080px; height:1440px; }
+  body {
+    font-family:"Microsoft YaHei UI","Microsoft YaHei","PingFang SC",sans-serif;
+    background:#07080c; color:#eef1f7; overflow:hidden; position:relative;
+  }
+  .glow { position:absolute; border-radius:50%; filter:blur(100px); }
+  .g1 { width:820px; height:820px; left:-260px; top:-300px; background:rgba(96,112,255,.40); }
+  .g2 { width:620px; height:620px; right:-220px; top:260px; background:rgba(45,212,160,.22); }
+  .g3 { width:760px; height:760px; left:60px; bottom:-420px; background:rgba(148,80,235,.24); }
+  .grid { position:absolute; inset:0;
+    background-image:linear-gradient(rgba(255,255,255,.04) 1px,transparent 1px),
+                     linear-gradient(90deg,rgba(255,255,255,.04) 1px,transparent 1px);
+    background-size:60px 60px;
+    -webkit-mask-image:radial-gradient(ellipse 70% 55% at 50% 30%,#000 20%,transparent 80%);
+  }
+  .wrap { position:relative; height:100%; padding:60px 68px 46px; display:flex; flex-direction:column; }
+
+  /* brand */
+  .brand { display:flex; align-items:center; gap:14px; }
+  .logo { width:48px; height:48px; border-radius:14px; display:grid; place-items:center;
+    background:linear-gradient(145deg,#8091ff,#4a55d8);
+    box-shadow:0 12px 34px rgba(90,105,255,.5), inset 0 1px 0 rgba(255,255,255,.35); }
+  .logo svg { width:27px; height:27px; }
+  .bname { font-size:23px; font-weight:700; letter-spacing:.4px; }
+  .btag { margin-left:auto; font-size:15px; color:#9ba5ba; padding:8px 16px;
+    border:1px solid rgba(255,255,255,.15); border-radius:999px; background:rgba(255,255,255,.04); }
+
+  /* hero */
+  .hero { margin-top:52px; }
+  .kicker { font-size:17px; letter-spacing:3.5px; color:#8892a8; margin-bottom:20px; }
+  h1 { font-size:78px; line-height:1.1; font-weight:800; letter-spacing:-2px; }
+  h1 em { font-style:normal;
+    background:linear-gradient(96deg,#b3c0ff 0%,#7b8cff 40%,#34d399 100%);
+    -webkit-background-clip:text; background-clip:text; color:transparent; }
+  .sub { margin-top:26px; font-size:23px; line-height:1.62; color:#a4adc1; }
+
+  /* 曲线卡 */
+  .curve-card { margin-top:40px; border-radius:28px; padding:26px 26px 10px;
+    background:linear-gradient(180deg,rgba(255,255,255,.085),rgba(255,255,255,.025));
+    border:1px solid rgba(255,255,255,.11);
+    box-shadow:0 34px 80px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.10); }
+  .chead { display:flex; align-items:center; justify-content:space-between; margin-bottom:6px; }
+  .pill { font-size:15.5px; color:#b6bfd3; background:rgba(255,255,255,.07);
+    border:1px solid rgba(255,255,255,.10); padding:8px 15px; border-radius:999px; }
+  .pill b { color:#fff; font-weight:600; }
+  .live { display:inline-block; width:9px; height:9px; border-radius:50%; background:#34d399;
+    margin-right:9px; box-shadow:0 0 14px #34d399; vertical-align:0; }
+
+  /* 三卖点 */
+  .feats { margin-top:38px; display:grid; grid-template-columns:repeat(3,1fr); gap:18px; }
+  .feat { border-radius:22px; padding:26px 22px 24px;
+    background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.09); }
+  .feat .ic { width:44px; height:44px; border-radius:13px; display:grid; place-items:center; margin-bottom:18px;
+    background:rgba(109,124,255,.16); border:1px solid rgba(109,124,255,.32); }
+  .feat.green .ic { background:rgba(52,211,153,.14); border-color:rgba(52,211,153,.32); }
+  .feat .ic svg { width:24px; height:24px; }
+  .feat h3 { font-size:22px; font-weight:700; margin-bottom:10px; letter-spacing:.2px; }
+  .feat p { font-size:15.5px; line-height:1.6; color:#98a2b7; }
+
+  /* 数据 */
+  .stats { margin-top:26px; display:flex; border-radius:22px; overflow:hidden;
+    border:1px solid rgba(255,255,255,.09); background:rgba(255,255,255,.035); }
+  .stat { flex:1; padding:24px 6px 20px; text-align:center; border-right:1px solid rgba(255,255,255,.07); }
+  .stat:last-child { border-right:none; }
+  .stat b { display:block; font-size:34px; font-weight:800; letter-spacing:-1px; color:#fff; }
+  .stat b i { font-style:normal; font-size:16px; font-weight:600; color:#9aa4b8; margin-left:3px; }
+  .stat span { font-size:14.5px; color:#8b95a9; }
+
+  /* 底 */
+  .foot { margin-top:auto; padding-top:30px; display:flex; align-items:center; justify-content:space-between;
+    border-top:1px solid rgba(255,255,255,.07); }
+  .foot .l { font-size:20px; color:#cdd5e4; }
+  .foot .l b { color:#fff; }
+  .foot .r { font-size:15px; color:#78818f; }
+</style>
+</head>
+<body>
+  <div class="glow g1"></div><div class="glow g2"></div><div class="glow g3"></div>
+  <div class="grid"></div>
+
+  <div class="wrap">
+    <div class="brand">
+      <div class="logo">
+        <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.1" stroke-linecap="round">
+          <path d="M4 14.5V9.5M8 18.5V5.5M12 21V3M16 16.5V7.5M20 13.5V10.5"/>
+        </svg>
+      </div>
+      <div class="bname">AI 情绪调音</div>
+      <div class="btag">Folia · Folium 插件</div>
+    </div>
+
+    <div class="hero">
+      <div class="kicker">每 一 首 歌 · 都 有 自 己 的 声 音</div>
+      <h1>让播放器<br><em>听懂这首歌</em></h1>
+      <div class="sub">按歌曲的情绪与风格，自动生成一条专属 EQ 曲线。<br>你只管放，它负责调。</div>
+    </div>
+
+    <div class="curve-card">
+      <div class="chead">
+        <div class="pill"><span class="live"></span><b>跟随中</b>　情绪 02 · 低频偏厚</div>
+        <div class="pill">流派 <b>流行</b></div>
+      </div>
+      <svg width="940" height="272" viewBox="0 0 940 272">
+        <defs>
+          <linearGradient id="lg" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0" stop-color="#a9b6ff"/><stop offset="1" stop-color="#34d399"/>
+          </linearGradient>
+          <linearGradient id="fl" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#6d7cff" stop-opacity=".34"/>
+            <stop offset="1" stop-color="#6d7cff" stop-opacity="0"/>
+          </linearGradient>
+        </defs>
+        <g stroke="rgba(255,255,255,.09)" stroke-width="1">
+          <line x1="0" y1="60" x2="940" y2="60"/><line x1="0" y1="120" x2="940" y2="120"/>
+          <line x1="0" y1="180" x2="940" y2="180"/>
+        </g>
+        <line x1="0" y1="120" x2="940" y2="120" stroke="rgba(255,255,255,.22)" stroke-dasharray="5 7"/>
+        <path d="M10 116 L124 80 L238 92 L352 122 L466 168 L580 112 L694 96 L808 92 L922 100 L922 232 L10 232 Z" fill="url(#fl)"/>
+        <path d="M10 116 L124 80 L238 92 L352 122 L466 168 L580 112 L694 96 L808 92 L922 100"
+              fill="none" stroke="url(#lg)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+        <g fill="#0a0c11" stroke="#93a3ff" stroke-width="3.2">
+          <circle cx="10" cy="116" r="6"/><circle cx="124" cy="80" r="6"/><circle cx="238" cy="92" r="6"/>
+          <circle cx="352" cy="122" r="6"/><circle cx="466" cy="168" r="6"/><circle cx="580" cy="112" r="6"/>
+          <circle cx="694" cy="96" r="6"/><circle cx="808" cy="92" r="6"/><circle cx="922" cy="100" r="6"/>
+        </g>
+        <g fill="#79839a" font-size="16" font-family="Microsoft YaHei">
+          <text x="2" y="262">31.5</text><text x="106" y="262">63</text><text x="220" y="262">125</text>
+          <text x="334" y="262">250</text><text x="448" y="262">500</text><text x="566" y="262">1k</text>
+          <text x="680" y="262">2k</text><text x="794" y="262">4k</text><text x="906" y="262">8k</text>
+        </g>
+      </svg>
+    </div>
+
+    <div class="feats">
+      <div class="feat">
+        <div class="ic">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#a9b6ff" stroke-width="2.1" stroke-linecap="round">
+            <path d="M3 12h3.2l2.8-7 4 14 2.8-7H21"/>
+          </svg>
+        </div>
+        <h3>自动识别</h3>
+        <p>切歌即换曲线，<br>不用手动点预设</p>
+      </div>
+      <div class="feat">
+        <div class="ic">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#a9b6ff" stroke-width="2.1" stroke-linecap="round">
+            <path d="M12 3v18M5.5 8v8M18.5 8v8"/><path d="M8.7 5.5v13M15.3 5.5v13" opacity=".45"/>
+          </svg>
+        </div>
+        <h3>10 段精调</h3>
+        <p>强度可调，<br>平缓曲线自动补足</p>
+      </div>
+      <div class="feat green">
+        <div class="ic">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#34d399" stroke-width="2.1" stroke-linecap="round">
+            <path d="M12 3.2l7.2 4.1v5c0 4.6-3.1 7.7-7.2 9.2-4.1-1.5-7.2-4.6-7.2-9.2v-5z"/>
+            <path d="M9 12.2l2.1 2.1 4-4.2"/>
+          </svg>
+        </div>
+        <h3>纯本地</h3>
+        <p>不联网、不上传，<br>断网也能用</p>
+      </div>
+    </div>
+
+    <div class="stats">
+      <div class="stat"><b>0.12<i>dB</i></b><span>曲线误差</span></div>
+      <div class="stat"><b>10<i>µs</i></b><span>单次推理</span></div>
+      <div class="stat"><b>590<i>KB</i></b><span>模型体积</span></div>
+      <div class="stat"><b>0</b><span>联网请求</span></div>
+    </div>
+
+    <div class="foot">
+      <div class="l"><b>装上就调</b>　无需任何配置</div>
+      <div class="r">Folia 音乐播放器</div>
+    </div>
+  </div>
+</body>
+</html>
