@@ -4,7 +4,6 @@
 import { BANDS_HZ, GENRES } from './data.mjs';
 import { axesOf, curveFor, matchEmotion, matchGenre, emotionShape } from './classify.mjs';
 import { shared, alive } from './live.mjs';
-import { eqProbe, writeEq, probeNames, probeWithCover } from './eqwrite.mjs';
 import { hasOfficialEqualizer, applyEqCurve, readEqState, releaseEqCurve, syncEqCurve, isOurCurveInPlace } from './eqofficial.mjs';
 
 /** 模组 id，与 mod.json 一致；官方接口用它标识曲线归属。 */
@@ -182,23 +181,6 @@ export function mountFx(/** @type {HTMLElement} */ container, /** @type {any} */
     pickCar.style.transform = pickOpen ? 'rotate(180deg)' : '';
   };
   pickBtn.addEventListener('click', togglePick);
-
-  // 自动探测已关闭：实测拿不到 store（见对话结论），保留按钮手动触发
-
-  // 自检：宿主打过注入补丁的话，这里能摸到 __foliumAudio；结果写进模组存储
-  setTimeout(() => {
-    try {
-      const api = /** @type {any} */ (window).__foliumAudio;
-      const rep = JSON.stringify({
-        present: !!api,
-        keys: api ? Object.keys(api) : [],
-        gains: api && api.get ? api.get() : null,
-      });
-      folium?.storage?.set?.('apiProbe', rep)?.catch?.(() => {});
-    } catch (e) {
-      folium?.storage?.set?.('apiProbe', 'err: ' + String((e && e.message) || e))?.catch?.(() => {});
-    }
-  }, 1500);
 
   let autoGenre = true;
   // 目标峰值 dB：AI 原始曲线只有 ±1.7dB，按峰值自动定倍率，不写死百分比
@@ -429,13 +411,14 @@ export function mountFx(/** @type {HTMLElement} */ container, /** @type {any} */
   const timer = setInterval(tick, 300);
 
   /**
-   * 解析可用的音频写入接口，兼容多种落地形态：
-   *  1) 本机补丁版：window.__foliumAudio.set/get
-   *  2) 上游稳定服务：folium.audio.mix.setEqualizer / folium.audio.setEqualizer
-   *  3) 上游实验接口：folium.experimental['audio.mix'] / ['audio']
+   * 解析 EQ 写入接口。
+   *
+   * 只走官方 `folium.equalizer`（Folium 1.7 / Folia 0.7.22 起）。
+   * 早先还留了两条回退：一个是本机打补丁时挂到 window 上的全局对象（任何页面脚本
+   * 都能伪造），另一个是未定型的实验面；在声明了 `folia >= 0.7.22` 之后都不再需要，
+   * 已一并删除。
    */
   function resolveAudioApi() {
-    const w = /** @type {any} */ (window);
     if (hasOfficialEqualizer(folium)) {
       return {
         via: 'official',
@@ -446,22 +429,6 @@ export function mountFx(/** @type {HTMLElement} */ container, /** @type {any} */
           return s.ok ? s.state.gains : null;
         },
       };
-    }
-    try {
-      if (w.__foliumAudio && typeof w.__foliumAudio.set === 'function') {
-        return { via: 'patch', set: (g) => w.__foliumAudio.set(g), get: () => (w.__foliumAudio.get ? w.__foliumAudio.get() : null) };
-      }
-    } catch {}
-    const candidates = [];
-    try { candidates.push(folium?.audio?.mix, folium?.audio); } catch {}
-    try { candidates.push(folium?.experimental?.['audio.mix'], folium?.experimental?.['audio']); } catch {}
-    for (const c of candidates) {
-      if (!c) continue;
-      try {
-        if (typeof c.setEqualizer === 'function') {
-          return { via: 'api', set: (g) => c.setEqualizer(g), get: () => (typeof c.getEqualizer === 'function' ? c.getEqualizer() : null) };
-        }
-      } catch {}
     }
     return null;
   }

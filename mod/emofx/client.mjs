@@ -1,67 +1,35 @@
-// client 入口：从 mods-cache 动态加载 UI 包（blob import），并每 2 秒检查一次版本。
-// 变了就重新 import 并原地重挂——不用重启 Folia，也不用重新确认模组。
+// client 入口：静态导入 UI 包，注册标签页和音频监听层。
 //
-// 注意：本文件与 index.cjs 一起构成「不动的壳」，改动极少；日常迭代只改 cache 里的 ui.bundle.mjs。
+// 这里**只加载签名范围内的代码**：`./ui.bundle.mjs` 是构建产物，随模组一起签名。
+// 早先的版本会优先读 mods-cache 里的副本、用 blob: URL 动态 import、每 2 秒轮询 ——
+// 那样等于让「审查过的那份」和「实际跑的那份」可以不一致，任何能写缓存目录的程序
+// 都能在 Folia 主窗口注入代码且不触发重新确认。已按要求全部去掉：不再有 rpc、
+// 不再有 blob import、不再有轮询，main 入口也就不需要了。
 
-const POLL_MS = 2000;
+import { mount as mountFx, feed, reset, autoTick } from './ui.bundle.mjs';
 
 /** @param {any} folium */
 export default function activate(folium) {
-  /** @type {{mod:any, mtime:number}|null} */
-  let loaded = null;
-  /** @type {Set<{container:HTMLElement, ctx:any, host:HTMLElement, dispose:()=>void}>} */
+  /** 每个挂载点各自的界面实例，dispose 时统一清掉。 */
   const views = new Set();
-  let disposed = false;
 
-  /** 从 cache 拉取并加载 UI 包 */
-  async function pull() {
-    const r = await folium.rpc.call('ui.get');
-    if (!r || !r.ok) return { ok: false, reason: r?.reason || 'rpc-failed' };
-    if (loaded && loaded.mtime === r.mtime) return { ok: true, changed: false };
-
-    const url = URL.createObjectURL(new Blob([r.text], { type: 'text/javascript' }));
-    try {
-      const mod = await import(url);
-      loaded = { mod, mtime: r.mtime };
-      return { ok: true, changed: true };
-    } catch (e) {
-      return { ok: false, reason: String((e && e.message) || e) };
-    } finally {
-      setTimeout(() => URL.revokeObjectURL(url), 2000);
-    }
-  }
-
-  /** 挂载一个视图（供不同入口复用） */
-  function mountView(container, ctx) {
+  const mountView = (container, ctx) => {
     container.innerHTML = '';
     const host = document.createElement('div');
     host.style.cssText = 'height:100%;display:flex;flex-direction:column;min-height:0';
     container.appendChild(host);
 
-    const rec = { container, ctx, host, dispose: () => {} };
+    const rec = { dispose: null };
     views.add(rec);
 
-    const paint = () => {
-      try {
-        rec.dispose?.();
-      } catch {}
-      host.innerHTML = '';
-      if (!loaded) {
-        host.innerHTML =
-          '<div style="padding:16px;opacity:.7;font:13px system-ui">UI 包还没准备好（mods-cache 里没有 ui.bundle.mjs）</div>';
-        return;
-      }
-      try {
-        const d = loaded.mod.mount(host, ctx, folium);
-        rec.dispose = typeof d === 'function' ? d : () => {};
-      } catch (e) {
-        host.innerHTML = `<div style="padding:16px;color:#fca5a5;font:12px system-ui">UI 出错：${String(
-          (e && e.message) || e
-        )}</div>`;
-      }
-    };
-    rec.repaint = paint;
-    paint();
+    try {
+      const dispose = mountFx(host, ctx, folium);
+      rec.dispose = typeof dispose === 'function' ? dispose : null;
+    } catch (error) {
+      host.innerHTML = `<div style="padding:16px;color:#fca5a5;font:12px system-ui">UI 出错：${String(
+        (error && error.message) || error
+      )}</div>`;
+    }
 
     return () => {
       try {
@@ -70,9 +38,13 @@ export default function activate(folium) {
       views.delete(rec);
       container.innerHTML = '';
     };
-  }
+  };
 
-  // stageLayer：把宿主频谱喂给 UI 包（同样走动态包，保证和 UI 同一份状态）
+  /*
+   * stageLayer：把宿主频谱喂给 UI，并在面板关闭时继续驱动 EQ 写入。
+   * 曲线计算与写入放在这里而不是界面里 —— 标签页是「打开才挂载」的，
+   * 逻辑挂在界面上就等于「不打开面板模组不工作」。
+   */
   folium.registries.stageLayers.register({
     id: 'analyzer',
     slot: 'player.stage.back',
@@ -81,20 +53,19 @@ export default function activate(folium) {
       if (!ctx.audio) return;
       ctx.onFrame(() => {
         try {
-          loaded?.mod.feed(ctx.audio.getBands(), ctx.audio.getPower());
-          // 面板没开时由引擎自己算曲线并写入宿主 —— 模组不该要求用户一直开着面板。
-          loaded?.mod.autoTick?.(folium);
+          feed(ctx.audio.getBands(), ctx.audio.getPower());
+          autoTick(folium);
         } catch {}
       });
       return () => {
         try {
-          loaded?.mod.reset();
+          reset();
         } catch {}
       };
     },
   });
 
-  const mount = (/** @type {HTMLElement} */ c, /** @type {any} */ ctx) => mountView(c, ctx);
+  const mount = (container, ctx) => mountView(container, ctx);
 
   folium.registries.homeTabs.register({
     id: 'fx',
@@ -108,37 +79,15 @@ export default function activate(folium) {
     mount,
   });
 
-  // 首次加载 + 轮询热更新
-  const boot = async () => {
-    const r = await pull();
-    if (!r.ok) {
-      folium.log?.warn?.('[emofx] ui bundle:', r.reason);
-    }
-    for (const v of views) v.repaint?.();
-  };
-  boot();
-
-  const timer = setInterval(async () => {
-    if (disposed) return;
-    const r = await pull();
-    if (r.ok && r.changed) {
-      folium.log?.info?.('[emofx] hot-reloaded ui bundle');
-      for (const v of views) v.repaint?.();
-    }
-  }, POLL_MS);
-
   const stop = () => {
-    disposed = true;
-    clearInterval(timer);
-    for (const v of [...views]) {
+    for (const view of [...views]) {
       try {
-        v.dispose?.();
+        view.dispose?.();
       } catch {}
     }
     views.clear();
-    loaded = null;
   };
   folium.onDispose?.(stop);
-  folium.log?.info?.('[emofx] shell ready (hot reload every 2s)');
+  folium.log?.info?.('[emofx] ready');
   return stop;
 }

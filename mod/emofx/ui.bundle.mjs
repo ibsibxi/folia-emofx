@@ -118,209 +118,6 @@ function reset() {
 }
 
 
-// ===== eqwrite.mjs =====
-// 直接写 Folia 的 EQ 设置：从 React fiber 树里找到 settings store 的 setter 并调用。
-// 不打开任何面板、不点任何宿主控件。
-//
-// 原理：EQ 弹窗那类组件用 `useStore(sel => sel.audioEqualizerSettings)` 取当前值，
-// 用 `useStore(sel => sel.handleSetAudioEqualizerSettings)` 取 setter。这两个值都会
-// 落在该组件 fiber 的 hook 链表里（useSyncExternalStore 的 memoizedState）。
-// 于是：全局扫 fiber → 找到 hook 里带 customSlots/gains 的对象 → 同一 fiber 里
-// 再找 length === 1 的函数（= 单参数 setter）→ 调用。
-
-const FIBER_KEY = /^__react(Fiber|InternalInstance|Container)\$/;
-
-/** 收集页面里所有 React 根 fiber */
-function roots() {
-  /** @type {Set<any>} */
-  const out = new Set();
-  for (const el of document.querySelectorAll('*')) {
-    for (const k of Object.getOwnPropertyNames(el)) {
-      if (!FIBER_KEY.test(k)) continue;
-      let f = /** @type {any} */ (el)[k];
-      // 往上爬到根
-      let guard = 0;
-      while (f && f.return && guard++ < 5000) f = f.return;
-      if (f) out.add(f);
-      break;
-    }
-  }
-  return [...out];
-}
-
-/** 广度遍历 fiber 树 */
-function* walk(/** @type {any} */ root) {
-  const stack = [root];
-  let guard = 0;
-  while (stack.length && guard++ < 200000) {
-    const f = stack.pop();
-    if (!f) continue;
-    yield f;
-    if (f.sibling) stack.push(f.sibling);
-    if (f.child) stack.push(f.child);
-  }
-}
-
-/** 判断一个值像不像 EQ 设置对象 */
-function looksLikeEq(/** @type {any} */ v) {
-  return (
-    v &&
-    typeof v === 'object' &&
-    Array.isArray(v.gains) &&
-    v.gains.length >= 5 &&
-    Array.isArray(v.customSlots) &&
-    typeof v.enabled === 'boolean'
-  );
-}
-
-/**
- * 找到「持有 EQ 设置」的 fiber，以及同一组件里所有单参数函数（setter 候选）。
- */
-function findEq() {
-  for (const r of roots()) {
-    for (const f of walk(r)) {
-      let h = f.memoizedState;
-      let depth = 0;
-      /** @type {any} */ let eqHook = null;
-      /** @type {any[]} */ const fns = [];
-      while (h && depth++ < 80) {
-        const v = h.memoizedState;
-        if (!eqHook && looksLikeEq(v)) eqHook = v;
-        if (typeof v === 'function') fns.push(v);
-        h = h.next;
-      }
-      if (eqHook) {
-        return {
-          fiber: f,
-          settings: eqHook,
-          setters: fns.filter((fn) => fn.length === 1),
-          allFns: fns.map((fn) => ({ name: String(fn.name || '?'), arity: fn.length })),
-        };
-      }
-    }
-  }
-  return null;
-}
-
-/** 只读报告：不写任何东西，用于确认能不能拿到 */
-function eqProbe() {
-  const t0 = performance.now();
-  const rootsArr = roots();
-  const found = findEq();
-  const ms = Math.round(performance.now() - t0);
-  if (!found) {
-    return JSON.stringify({ ok: false, roots: rootsArr.length, ms, reason: 'eq-settings-not-found' });
-  }
-  const s = found.settings;
-  return JSON.stringify({
-    ok: true,
-    roots: rootsArr.length,
-    ms,
-    preset: s.preset,
-    enabled: s.enabled,
-    gains0: s.gains,
-    customSlots: s.customSlots.map((x) => (x && Array.isArray(x.gains) ? x.gains.length : -1)),
-    effectsKeys: s.effects ? Object.keys(s.effects) : null,
-    setters: found.setters.length,
-    fnList: found.allFns,
-  });
-}
-
-/**
- * 写入：把 gains 应用到当前预设，同时存进「自定义 1」。
- * @param {number[]} gains 10 段 dB
- * @param {number} [slot] 自定义槽位下标（0 = 自定义 1）
- */
-function writeEq(gains, slot = 0) {
-  const found = findEq();
-  if (!found) return { ok: false, reason: 'eq-settings-not-found' };
-  const cur = found.settings;
-  const next = {
-    ...cur,
-    enabled: true,
-    gains: [...gains],
-    customSlots: cur.customSlots.map((s, i) => (i === slot ? { ...s, gains: [...gains] } : s)),
-  };
-  /** @type {string[]} */
-  const tried = [];
-  for (const fn of found.setters) {
-    tried.push(String(fn.name || 'anon'));
-    try {
-      fn(next);
-    } catch {}
-  }
-  return { ok: found.setters.length > 0, applied: found.setters.length, tried, before: cur.gains, after: next.gains };
-}
-
-/** 扫描全树，列出所有「名字像音频/效果器」的 hook 函数 —— 用来判断能不能直接摸到 store action */
-function probeNames() {
-  /** @type {Map<string, number>} */
-  const hits = new Map();
-  let total = 0;
-  let hooks = 0;
-  for (const r of roots()) {
-    for (const f of walk(r)) {
-      let h = f.memoizedState;
-      let d = 0;
-      while (h && d++ < 80) {
-        hooks++;
-        const v = h.memoizedState;
-        if (typeof v === 'function') {
-          total++;
-          const n = String(v.name || '');
-          if (n && /equal|audio|effect|preset|mix/i.test(n)) hits.set(n, (hits.get(n) || 0) + 1);
-        }
-        h = h.next;
-      }
-    }
-  }
-  return JSON.stringify({ hooks, fns: total, hits: [...hits.entries()] });
-}
-/** 程序化切换宿主面板页签（不打开任何弹窗，只是让含 EQ 入口的组件挂载） */
-function clickTabByText(/** @type {string} */ text) {
-  const nodes = [...document.querySelectorAll('button,[role="tab"],span,div')];
-  const hit = nodes.find((n) => (n.textContent || '').trim() === text && n.childElementCount <= 2);
-  if (!hit) return false;
-  const t = hit.closest('button,[role="tab"]') || hit;
-  try {
-    t.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * 实验：切到「封面」页 → 扫描 → 切回。
- * 返回 { coverTab, eqEntry, names, eq } 供外部判断。
- */
-export async function probeWithCover(/** @type {string} */ backTo) {
-  const out = { coverTab: false, eqEntry: false, names: [], eq: null };
-  out.coverTab = clickTabByText('封面');
-  await new Promise((r) => setTimeout(r, 500));
-  out.eqEntry = !!document.querySelector('[data-ponder="audio-equalizer"]');
-  const seen = new Map();
-  for (const r of roots()) {
-    for (const f of walk(r)) {
-      let h = f.memoizedState;
-      let d = 0;
-      while (h && d++ < 80) {
-        const v = h.memoizedState;
-        if (typeof v === 'function') {
-          const n = String(v.name || '');
-          if (n && /equal|audio|effect|preset/i.test(n)) seen.set(n, (seen.get(n) || 0) + 1);
-        }
-        h = h.next;
-      }
-    }
-  }
-  out.names = [...seen.entries()];
-  const eq = findEq();
-  out.eq = eq ? { preset: eq.settings.preset, setters: eq.setters.length } : null;
-  clickTabByText(backTo);
-  return JSON.stringify(out);
-}
-
 // ===== eqofficial.mjs =====
 // Folia EQ 写入：走官方 `folium.equalizer`（Folium 1.7 起）。
 //
@@ -640,23 +437,6 @@ function mountFx(/** @type {HTMLElement} */ container, /** @type {any} */ ctx, /
   };
   pickBtn.addEventListener('click', togglePick);
 
-  // 自动探测已关闭：实测拿不到 store（见对话结论），保留按钮手动触发
-
-  // 自检：宿主打过注入补丁的话，这里能摸到 __foliumAudio；结果写进模组存储
-  setTimeout(() => {
-    try {
-      const api = /** @type {any} */ (window).__foliumAudio;
-      const rep = JSON.stringify({
-        present: !!api,
-        keys: api ? Object.keys(api) : [],
-        gains: api && api.get ? api.get() : null,
-      });
-      folium?.storage?.set?.('apiProbe', rep)?.catch?.(() => {});
-    } catch (e) {
-      folium?.storage?.set?.('apiProbe', 'err: ' + String((e && e.message) || e))?.catch?.(() => {});
-    }
-  }, 1500);
-
   let autoGenre = true;
   // 目标峰值 dB：AI 原始曲线只有 ±1.7dB，按峰值自动定倍率，不写死百分比
   let targetPeak = 3.5;
@@ -886,13 +666,14 @@ function mountFx(/** @type {HTMLElement} */ container, /** @type {any} */ ctx, /
   const timer = setInterval(tick, 300);
 
   /**
-   * 解析可用的音频写入接口，兼容多种落地形态：
-   *  1) 本机补丁版：window.__foliumAudio.set/get
-   *  2) 上游稳定服务：folium.audio.mix.setEqualizer / folium.audio.setEqualizer
-   *  3) 上游实验接口：folium.experimental['audio.mix'] / ['audio']
+   * 解析 EQ 写入接口。
+   *
+   * 只走官方 `folium.equalizer`（Folium 1.7 / Folia 0.7.22 起）。
+   * 早先还留了两条回退：一个是本机打补丁时挂到 window 上的全局对象（任何页面脚本
+   * 都能伪造），另一个是未定型的实验面；在声明了 `folia >= 0.7.22` 之后都不再需要，
+   * 已一并删除。
    */
   function resolveAudioApi() {
-    const w = /** @type {any} */ (window);
     if (hasOfficialEqualizer(folium)) {
       return {
         via: 'official',
@@ -903,22 +684,6 @@ function mountFx(/** @type {HTMLElement} */ container, /** @type {any} */ ctx, /
           return s.ok ? s.state.gains : null;
         },
       };
-    }
-    try {
-      if (w.__foliumAudio && typeof w.__foliumAudio.set === 'function') {
-        return { via: 'patch', set: (g) => w.__foliumAudio.set(g), get: () => (w.__foliumAudio.get ? w.__foliumAudio.get() : null) };
-      }
-    } catch {}
-    const candidates = [];
-    try { candidates.push(folium?.audio?.mix, folium?.audio); } catch {}
-    try { candidates.push(folium?.experimental?.['audio.mix'], folium?.experimental?.['audio']); } catch {}
-    for (const c of candidates) {
-      if (!c) continue;
-      try {
-        if (typeof c.setEqualizer === 'function') {
-          return { via: 'api', set: (g) => c.setEqualizer(g), get: () => (typeof c.getEqualizer === 'function' ? c.getEqualizer() : null) };
-        }
-      } catch {}
     }
     return null;
   }
@@ -1043,5 +808,6 @@ function mountFx(/** @type {HTMLElement} */ container, /** @type {any} */ ctx, /
     container.innerHTML = '';
   };
 }
+
 
 export { mountFx as mount, feed, reset, autoTick };
